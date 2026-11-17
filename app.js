@@ -1,12 +1,10 @@
 // Mentorhood Math starter — static GitHub Pages frontend + isolated Supabase backend.
 // Use only the Supabase PUBLISHABLE key in config.js. Never a service_role or secret key.
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.95.0';
 
 const $ = (id) => document.getElementById(id);
 const cfg = window.MENTORHOOD_CONFIG || {};
-const supabase = cfg.supabaseUrl && cfg.supabasePublishableKey
-  ? createClient(cfg.supabaseUrl, cfg.supabasePublishableKey, { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: true } })
-  : null;
+let supabase = null;
+let isConnecting = Boolean(cfg.supabaseUrl && cfg.supabasePublishableKey);
 let user = null;
 let member = null;
 let projects = [];
@@ -20,7 +18,7 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&am
 function showOne(ids, selected) { ids.forEach(id => $(id).hidden = id !== selected); }
 function route() {
   const path = (location.hash || '#home').slice(1);
-  const publicRoutes = ['home','programs','classes','resources','about','team','contact'];
+  const publicRoutes = ['home', 'programs', 'method', 'ib', 'kangaroo', 'steam', 'prep', 'classes', 'online', 'inperson', 'camp', 'resources', 'courses', 'team', 'teach', 'blog', 'contact', 'notes'];
   const publicPage = publicRoutes.includes(path) ? path : null;
   $('public-view').hidden = !publicPage;
   $('portal-view').hidden = !!publicPage;
@@ -28,11 +26,12 @@ function route() {
   document.querySelectorAll('[data-route]').forEach(el => el.setAttribute('aria-current', el.dataset.route === path ? 'page' : 'false'));
   if (!publicPage) renderGate();
   $('site-nav').classList.remove('open');
+  document.querySelectorAll('.nav-group').forEach(x=>x.classList.remove('expanded'));
   document.querySelector('.mobile-menu')?.setAttribute('aria-expanded','false');
   window.scrollTo(0,0);
 }
 function renderGate() {
-  if (!supabase) return showOne(['portal-loading','portal-unconfigured','portal-login','portal-pending','portal-app'],'portal-unconfigured');
+  if (!supabase) return showOne(['portal-loading','portal-unconfigured','portal-login','portal-pending','portal-app'],isConnecting ? 'portal-loading' : 'portal-unconfigured');
   if (!authReady) return showOne(['portal-loading','portal-unconfigured','portal-login','portal-pending','portal-app'],'portal-loading');
   const destination = !user ? 'portal-login' : 'portal-app';
   showOne(['portal-loading','portal-unconfigured','portal-login','portal-pending','portal-app'],destination);
@@ -44,7 +43,7 @@ function renderGate() {
     switchTab(activeTab);
   }
 }
-let authReady = !supabase;
+let authReady = false;
 async function refreshMember() {
   if (!supabase) return;
   try {
@@ -197,6 +196,15 @@ function init() {
   $('year').textContent = new Date().getFullYear();
   document.querySelector('.mobile-menu').addEventListener('click', () => {const nav=$('site-nav');const open=nav.classList.toggle('open');document.querySelector('.mobile-menu').setAttribute('aria-expanded',String(open));});
   window.addEventListener('hashchange',route);
+  document.querySelectorAll('.nav-group > a').forEach(link => link.addEventListener('click', e => {
+    if (window.innerWidth > 1100) return;
+    const group = e.currentTarget.parentElement;
+    if (!group.classList.contains('expanded')) {
+      e.preventDefault();
+      document.querySelectorAll('.nav-group').forEach(x => { if (x !== group) x.classList.remove('expanded'); });
+      group.classList.add('expanded');
+    }
+  }));
   $('login-form').addEventListener('submit',login);
   $('register-form').addEventListener('submit',register);
   $('google-auth').addEventListener('click',signInWithGoogle);
@@ -212,14 +220,27 @@ function init() {
   $('refresh-videos').addEventListener('click',loadVideos);
   setAuthMode('login');
   route();
-  if (supabase) {
+}
+init();
+// Public pages must render even if the Supabase JavaScript CDN cannot be reached.
+async function connectBackend() {
+  if (!isConnecting) { authReady = true; renderGate(); return; }
+  try {
+    const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2.95.0');
+    supabase = createClient(cfg.supabaseUrl, cfg.supabasePublishableKey, { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: true } });
+    isConnecting = false;
     supabase.auth.onAuthStateChange((event) => {
       if (event==='SIGNED_IN' || event==='SIGNED_OUT' || event==='USER_UPDATED') {
-        // Do not await Supabase network calls inside the auth event callback.
         setTimeout(()=>{refreshMember();},0);
       }
     });
-    refreshMember();
+    await refreshMember();
+  } catch (error) {
+    console.error('Supabase JavaScript could not load:', error);
+    isConnecting = false;
+    authReady = true;
+    renderGate();
   }
 }
-init();
+connectBackend();
+
